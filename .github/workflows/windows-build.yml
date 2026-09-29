@@ -1,0 +1,82 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - '**/*.cmake'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+      - '.gitmodules'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - '**/*.cmake'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+      - '.gitmodules'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Boost headers (Windows)
+        shell: pwsh
+        run: |
+          $boost_ver = "1.83.0"
+          $boost_dir = "boost_$($boost_ver -replace '\.','_')"
+          $url = "https://archives.boost.io/release/$boost_ver/source/${boost_dir}.zip"
+          Invoke-WebRequest -Uri $url -OutFile boost.zip
+          New-Item -ItemType Directory -Force -Path C:\local
+          Expand-Archive -Path boost.zip -DestinationPath C:\local
+          echo "BOOST_ROOT=C:\local\$boost_dir" >> $env:GITHUB_ENV
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: windows-2022-ccache-${{ github.sha }}
+          restore-keys: |
+            windows-2022-ccache-
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DELEMENT_ENABLE_ASIO=ON `
+            -DELEMENT_ENABLE_UPDATER=ON `
+            -DELEMENT_BUILD_PLUGINS=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Upload executable
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Element-Windows-Release
+          path: |
+            build/**/*.exe
+            build/**/*.dll
+          retention-days: 30
